@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satellite Operator ROI Calculator | InfluxDB</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    /* ── InfluxDB Brand Tokens ─────────────────────────────── */
+    :root {
+      --magenta:       #D30971;
+      --magenta-dark:  #A8065A;
+      --navy:          #020A47;
+      --dark:          #1B0E2B;
+      --dark-mid:      #2D1854;
+      --cyan:          #00C2FF;
+      --teal:          #5EE4E4;
+      --purple:        #9B2AFF;
+      --light-purple:  #9394FF;
+      --amber:         #F5A623;
+      --yellow:        #D6F622;
+      --green:         #1A7A4C;
+      --green-bg:      #E8F8F0;
+      --bg:            #F5F4FB;
+      --white:         #FFFFFF;
+      --off-white:     #FAFAFA;
+      --gray:          #6B6B8A;
+      --border:        #E0DFF0;
+      --text:          #1A1A2E;
+      --shadow-sm:     0 1px 4px rgba(27,14,43,.08);
+      --shadow-md:     0 4px 20px rgba(27,14,43,.12);
+      --shadow-lg:     0 8px 40px rgba(27,14,43,.18);
+      --r:             14px;
+      --r-sm:          8px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Header ───────────────────────────────────────────── */
+    .header {
+      background: var(--navy);
+      padding: 52px 24px 44px;
+      text-align: center;
+    }
+    .header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      background: #FAFAFA;
+      border: 1px solid rgba(2,10,71,.15);
+      color: #020A47;
+      padding: 5px 16px;
+      border-radius: 100px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      margin-bottom: 22px;
+    }
+    .header h1 {
+      font-size: clamp(26px, 4.5vw, 44px);
+      font-weight: 800;
+      color: #fff;
+      letter-spacing: -.03em;
+      margin-bottom: 14px;
+      line-height: 1.1;
+    }
+    .header h1 em { color: #fff; font-style: normal; }
+    .header p {
+      color: #fff;
+      font-size: 16px;
+      max-width: 540px;
+      margin: 0 auto;
+    }
+
+    /* ── Layout ───────────────────────────────────────────── */
+    .layout {
+      max-width: 1220px;
+      margin: 0 auto;
+      padding: 36px 20px 60px;
+      display: grid;
+      grid-template-columns: 390px 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+    @media (max-width: 920px) { .layout { grid-template-columns: 1fr; } }
+
+    /* Bug fix #5b: grid children must have min-width:0 to shrink below content size on mobile */
+    .input-panel, .results { min-width: 0; }
+
+    /* ── Input Panel ──────────────────────────────────────── */
+    .input-panel {
+      background: var(--white);
+      border-radius: var(--r);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+    }
+    @media (min-width: 921px) {
+      .input-panel { position: sticky; top: 20px; }
+    }
+    .input-panel-head {
+      background: var(--navy);
+      padding: 20px 24px;
+    }
+    .input-panel-head h2 { font-size: 15px; font-weight: 700; color: #fff; }
+    .input-panel-head p  { font-size: 12px; color: rgba(255,255,255,.5); margin-top: 3px; }
+
+    .input-body { padding: 22px 24px 24px; }
+
+    .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .row2 .field label span { display: block; margin-top: 1px; }
+
+    .field { margin-bottom: 18px; }
+    .field:last-of-type { margin-bottom: 0; }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--dark);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 6px;
+    }
+    .field label span { font-weight: 400; text-transform: none; color: var(--gray); }
+
+    .inp-wrap { position: relative; }
+    .inp-prefix, .inp-suffix {
+      position: absolute;
+      top: 50%; transform: translateY(-50%);
+      font-size: 13px; color: var(--gray); font-weight: 500;
+      pointer-events: none; user-select: none;
+    }
+    .inp-prefix { left: 11px; }
+    .inp-suffix { right: 11px; }
+
+    input[type=number], input[type=text].fmt-input {
+      width: 100%;
+      padding: 10px 11px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-sm);
+      font-size: 15px;
+      color: var(--text);
+      background: #fff;
+      transition: border-color .18s, box-shadow .18s;
+      -moz-appearance: textfield;
+    }
+    input[type=number]::-webkit-outer-spin-button,
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    input[type=number]:focus, input[type=text].fmt-input:focus { outline: none; border-color: var(--magenta); box-shadow: 0 0 0 3px rgba(211,9,113,.12); }
+    .has-pre input { padding-left: 26px !important; }
+    .has-suf input { padding-right: 46px !important; }
+
+    .divider { height: 1px; background: var(--border); margin: 20px 0; }
+
+    /* Scenario tabs */
+    .scenario-label {
+      font-size: 12px; font-weight: 700; color: var(--dark);
+      text-transform: uppercase; letter-spacing: .05em; margin-bottom: 10px;
+    }
+    .scenario-tabs { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; margin-bottom: 20px; }
+    .s-tab {
+      padding: 10px 4px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--r-sm);
+      background: #fff; cursor: pointer;
+      text-align: center; font-size: 12px; font-weight: 700;
+      color: var(--gray); transition: all .18s; line-height: 1;
+    }
+    .s-tab:hover { border-color: var(--magenta); color: var(--magenta); }
+    .s-tab.active { background: var(--magenta); border-color: var(--magenta); color: #fff; }
+
+    .calc-btn {
+      width: 100%; padding: 14px;
+      background: var(--magenta); color: #fff; border: none;
+      border-radius: var(--r-sm); font-size: 15px; font-weight: 800;
+      cursor: pointer; letter-spacing: .01em;
+      transition: background .18s, transform .1s;
+    }
+    .calc-btn:hover { background: var(--magenta-dark); }
+    .calc-btn:active { transform: scale(.99); }
+
+    /* ── Results ──────────────────────────────────────────── */
+    .results { display: flex; flex-direction: column; gap: 22px; }
+
+    .empty-state {
+      background: var(--white); border-radius: var(--r); box-shadow: var(--shadow-sm);
+      padding: 64px 32px; text-align: center;
+    }
+    .empty-state .e-ico { font-size: 52px; margin-bottom: 18px; }
+    .empty-state h3 { font-size: 19px; font-weight: 700; color: var(--dark); margin-bottom: 8px; }
+    .empty-state p { font-size: 14px; color: var(--gray); max-width: 340px; margin: 0 auto; }
+
+    /* TCO Hero */
+    .tco-card {
+      background: var(--navy);
+      border-radius: var(--r); box-shadow: var(--shadow-lg);
+      padding: 36px; color: #fff;
+    }
+    .tco-eyebrow {
+      font-size: 11px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .12em; color: rgba(255,255,255,.5); margin-bottom: 10px;
+    }
+    .tco-number {
+      font-size: clamp(38px, 6vw, 60px); font-weight: 900; letter-spacing: -.04em; line-height: 1;
+      margin-bottom: 8px;
+    }
+    .tco-number em { color: #fff; font-style: normal; }
+    .tco-sub { font-size: 14px; color: rgba(255,255,255,.55); margin-bottom: 28px; }
+    .tco-pills { display: flex; flex-wrap: wrap; gap: 24px; }
+    .tco-pill-label { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: rgba(255,255,255,.45); margin-bottom: 3px; }
+    .tco-pill-val   { font-size: 22px; font-weight: 800; color: #fff; }
+
+    /* Metric cards */
+    .metric-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; }
+    @media (max-width: 580px) { .metric-grid { grid-template-columns: 1fr; } }
+
+    .metric-card {
+      background: var(--white); border-radius: var(--r); box-shadow: var(--shadow-sm);
+      padding: 22px; border-top: 3px solid var(--magenta);
+    }
+    .metric-card.cyan   { border-top-color: var(--teal); }
+    .metric-card.purple { border-top-color: var(--light-purple); }
+    .metric-card.amber  { border-top-color: var(--yellow); }
+
+    .m-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--gray); margin-bottom: 8px; }
+    .m-val   { font-size: 30px; font-weight: 900; color: var(--dark); letter-spacing: -.03em; line-height: 1; margin-bottom: 4px; }
+    .m-sub   { font-size: 12px; color: var(--gray); }
+    .m-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: var(--green-bg); color: var(--green);
+      font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 100px; margin-top: 10px;
+    }
+
+    /* Charts */
+    .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 660px) { .charts-grid { grid-template-columns: 1fr; } }
+
+    .chart-card {
+      background: var(--white); border-radius: var(--r); box-shadow: var(--shadow-sm); padding: 24px;
+    }
+    .chart-card h3 { font-size: 15px; font-weight: 700; color: var(--dark); margin-bottom: 3px; }
+    .chart-card p  { font-size: 12px; color: var(--gray); margin-bottom: 20px; }
+    .chart-wrap    { position: relative; height: 240px; }
+
+    /* Breakdown table */
+    .breakdown {
+      background: var(--white); border-radius: var(--r); box-shadow: var(--shadow-sm); padding: 26px;
+    }
+    .breakdown h3 { font-size: 15px; font-weight: 700; color: var(--dark); margin-bottom: 3px; }
+    .breakdown > p { font-size: 12px; color: var(--gray); margin-bottom: 18px; }
+
+    /* Bug fix #5: mobile table overflow */
+    .bd-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .bd-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .bd-table th {
+      text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .08em; color: var(--gray);
+      padding: 7px 10px; border-bottom: 2px solid var(--border); white-space: nowrap;
+    }
+    .bd-table th:not(:first-child) { text-align: right; }
+    .bd-table td { padding: 11px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .bd-table td:not(:first-child) { text-align: right; font-weight: 600; }
+    .bd-table tr.total td { font-weight: 800; background: #F5F4FB; font-size: 14px; border-bottom: none; }
+    .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: middle; }
+    @media (max-width: 600px) { .driver-col { display: none; } } /* hide Key Driver on mobile */
+
+    /* UX #8: scale advantage tooltip */
+    .tip {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: rgba(255,255,255,.15); color: rgba(255,255,255,.6);
+      font-size: 9px; font-weight: 700; cursor: help;
+      vertical-align: middle; margin-left: 4px;
+    }
+
+    /* Assumptions */
+    .assumptions {
+      background: var(--white); border-radius: var(--r); box-shadow: var(--shadow-sm); padding: 22px;
+    }
+    .assm-toggle {
+      display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
+    }
+    .assm-toggle h3 { font-size: 14px; font-weight: 700; color: var(--dark); flex: 1; }
+    .assm-toggle .arr { font-size: 12px; color: var(--gray); transition: transform .2s; }
+    .assm-toggle.open .arr { transform: rotate(180deg); }
+    .assm-body { display: none; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+    .assm-body.open { display: block; }
+    .assm-list {
+      list-style: none;
+      display: flex; flex-direction: column; gap: 9px;
+    }
+    .assm-list li { font-size: 12px; color: var(--gray); padding-left: 14px; position: relative; }
+    .assm-list li::before { content: '•'; position: absolute; left: 0; color: var(--magenta); }
+    .assm-list strong { color: var(--dark); }
+
+    /* CTA */
+    .cta-card {
+      background: var(--navy);
+      border-radius: var(--r); box-shadow: var(--shadow-lg);
+      padding: 44px 36px; text-align: center; color: #fff;
+    }
+    .cta-card h2 { font-size: clamp(20px,3vw,26px); font-weight: 800; letter-spacing: -.02em; margin-bottom: 10px; }
+    .cta-card p  { font-size: 14px; color: rgba(255,255,255,.58); max-width: 460px; margin: 0 auto 28px; }
+    .cta-btns { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+    .btn-primary {
+      padding: 13px 26px; background: var(--magenta); color: #fff; border: none;
+      border-radius: var(--r-sm); font-size: 14px; font-weight: 700; cursor: pointer;
+      text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+      transition: background .18s;
+    }
+    .btn-primary:hover { background: var(--magenta-dark); }
+
+    .btn-ghost {
+      padding: 13px 26px; background: transparent; color: #fff;
+      border: 1.5px solid rgba(255,255,255,.28); border-radius: var(--r-sm);
+      font-size: 14px; font-weight: 600; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 8px;
+      transition: border-color .18s;
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,.7); }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: var(--dark); color: #fff;
+      padding: 12px 22px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      opacity: 0; transform: translateY(8px);
+      transition: opacity .28s, transform .28s; z-index: 999; pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+
+    /* Section title helper */
+    .s-title { font-size: 13px; font-weight: 700; color: var(--gray); text-transform: uppercase; letter-spacing: .07em; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════
+     HEADER
+════════════════════════════════════════════════════════ -->
+<div class="header">
+  <div class="header-badge">🛰 Satellite Telemetry · ROI Calculator</div>
+  <h1>Measure Your <em>Telemetry</em> Savings</h1>
+  <p>Model the business impact of unifying mission and service assurance onto a single time-series platform — using real operator benchmarks.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     LAYOUT
+════════════════════════════════════════════════════════ -->
+<div class="layout">
+
+  <!-- INPUT PANEL -->
+  <div class="input-panel">
+    <div class="input-panel-head">
+      <h2>Your Constellation Profile</h2>
+      <p>Inputs stay local — all calculations run in your browser.</p>
+    </div>
+    <div class="input-body">
+
+      <div class="row2">
+        <div class="field">
+          <label>Current Satellites <span>(operating)</span></label>
+          <div class="inp-wrap">
+            <input type="number" id="i-sats-now" value="100" min="1">
+          </div>
+        </div>
+        <div class="field">
+          <label>Planned <span>(next 24 mo)</span></label>
+          <div class="inp-wrap">
+            <input type="number" id="i-sats-plan" value="200" min="0">
+          </div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Annual Telemetry Infrastructure Cost</label>
+        <div class="inp-wrap has-pre has-suf">
+          <span class="inp-prefix">$</span>
+          <input type="text" inputmode="numeric" class="fmt-input" id="i-infra" value="2,000,000" oninput="fmtDollarInput('i-infra')">
+          <span class="inp-suffix">/ yr</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Monthly Storage Cost</label>
+        <div class="inp-wrap has-pre has-suf">
+          <span class="inp-prefix">$</span>
+          <input type="text" inputmode="numeric" class="fmt-input" id="i-storage" value="50,000" oninput="fmtDollarInput('i-storage')">
+          <span class="inp-suffix">/ mo</span>
+        </div>
+      </div>
+
+      <div class="row2">
+        <div class="field">
+          <label>Ops Team Size <span>(FTEs)</span></label>
+          <div class="inp-wrap">
+              <input type="number" id="i-team" value="15" min="0">
+          </div>
+        </div>
+        <div class="field">
+          <label>Current Mean Time To Recovery <span>(MTTR · minutes)</span></label>
+          <div class="inp-wrap has-suf">
+            <input type="number" id="i-mttr" value="90" min="1">
+            <span class="inp-suffix">min</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="scenario-label">Savings Scenario</div>
+      <div class="scenario-tabs">
+        <button class="s-tab" data-s="conservative" onclick="setScenario('conservative')">Conservative</button>
+        <button class="s-tab active" data-s="moderate" onclick="setScenario('moderate')">Moderate</button>
+        <button class="s-tab" data-s="aggressive" onclick="setScenario('aggressive')">Aggressive</button>
+      </div>
+
+      <button class="calc-btn" onclick="calculate()">Calculate My ROI →</button>
+    </div>
+  </div>
+
+  <!-- RESULTS PANEL -->
+  <div class="results" id="results">
+    <div class="empty-state" id="empty">
+      <div class="e-ico">📡</div>
+      <h3>Enter your constellation profile</h3>
+      <p>Fill in your infrastructure details and click <strong>Calculate My ROI</strong> to see estimated savings.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SCRIPT
+════════════════════════════════════════════════════════ -->
+<script>
+/* ── CONFIG (easy to edit) ───────────────────────────── */
+const CFG = {
+  scenarios: {
+    conservative: { label:'Conservative', infra:.30, storage:.40, team:.20, mttr:.25 },
+    moderate:     { label:'Moderate',     infra:.35, storage:.50, team:.25, mttr:.30 },
+    aggressive:   { label:'Aggressive',   infra:.40, storage:.60, team:.30, mttr:.35 },
+  },
+  fte:          165_000,   // fully-loaded annual FTE cost, USD
+  incidentCost: 18_000,    // cost per hour of satellite outage, USD
+  incidentsPY: { small:24, medium:60, large:120, xlarge:240 },
+  scale:        { small:1.00, medium:1.15, large:1.25, xlarge:1.35 },
+  colors:       ['#D30971','#5EE4E4','#9394FF','#D6F622'],
+  qualifiedUrl: 'QUALIFIED_FORM_URL',
+};
+
+/* ── STATE ───────────────────────────────────────────── */
+let scenario     = 'moderate';
+let _charts      = {};
+let _hasResults  = false;
+
+/* ── HELPERS ─────────────────────────────────────────── */
+const $  = id => document.getElementById(id);
+const fv = id => Math.max(0, parseFloat($(id).value.replace(/,/g, '')) || 0); // strip commas, clamp negatives
+
+function fmtDollarInput(id) {
+  const el = $(id);
+  const pos = el.selectionStart;
+  const raw = el.value.replace(/[^0-9]/g, '');
+  if (!raw) { el.value = ''; return; }
+  const commas = (raw.length - 1) - Math.floor((raw.length - 1) / 3) * 0; // count before
+  const formatted = parseInt(raw, 10).toLocaleString('en-US');
+  el.value = formatted;
+  // Restore cursor accounting for added/removed commas
+  const diff = formatted.length - el.value.replace(/,/g, '').length;
+  try { el.setSelectionRange(pos + diff, pos + diff); } catch(e) {}
+}
+
+function fmt(n) {
+  // Bug fix #1/#2: correct M boundary ($999,500+ → M) and strip trailing zeros for large values
+  if (n >= 999500) {
+    const m = n / 1e6;
+    if (m >= 10) return '$' + parseFloat(m.toFixed(1)) + 'M'; // $10M, $33.9M (no redundant .0)
+    return '$' + m.toFixed(2) + 'M';                          // $1.00M, $8.30M
+  }
+  if (n >= 1e3) return '$' + Math.round(n/1e3).toLocaleString() + 'K';
+  return '$' + Math.round(n).toLocaleString();
+}
+
+function scaleKey(total) {
+  if (total <= 50)  return 'small';
+  if (total <= 200) return 'medium';
+  if (total <= 500) return 'large';
+  return 'xlarge';
+}
+
+function showToast(msg, ms=3000) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), ms);
+}
+
+/* ── SCENARIO ────────────────────────────────────────── */
+function setScenario(s) {
+  scenario = s;
+  document.querySelectorAll('.s-tab').forEach(b => b.classList.toggle('active', b.dataset.s === s));
+  if (_hasResults) calculate(false);
+}
+
+/* ── CALCULATE ───────────────────────────────────────── */
+function calculate(anim=true) {
+  const inp = {
+    satsNow:  Math.max(1, Math.floor(fv('i-sats-now'))),  // Bug fix #4: integer, min 1
+    satsPlan: Math.floor(fv('i-sats-plan')),               // Bug fix #4: integer, min 0
+    infra:    fv('i-infra'),
+    storage:  fv('i-storage'),
+    team:     Math.floor(fv('i-team')),                    // Bug fix #4: integer FTEs
+    mttr:     fv('i-mttr'),
+  };
+  if (!inp.satsNow || !inp.infra) { showToast('Please enter satellite count and infrastructure cost.'); return; }
+
+  const sc  = CFG.scenarios[scenario];
+  const tot = inp.satsNow + inp.satsPlan;
+  const sk  = scaleKey(tot);
+  const sf  = CFG.scale[sk];
+  const inc = CFG.incidentsPY[sk];
+
+  // Annual savings per pillar
+  const p1 = inp.infra   * sc.infra   * sf;                                  // Infrastructure
+  const p2 = inp.storage * 12 * sc.storage;                                  // Storage
+  const p3 = inp.team    * CFG.fte  * sc.team;                               // Engineering
+  const p4 = inc * (inp.mttr * sc.mttr / 60) * CFG.incidentCost;            // Incidents
+
+  const annualTotal = p1+p2+p3+p4;
+  const tco3y       = annualTotal * 3;
+
+  const r = {
+    inp, sc, tot, sk, sf, inc,
+    p1, p2, p3, p4,
+    annualTotal, tco3y,
+    infraPct:   Math.round(sc.infra * sf * 100),
+    storagePct: Math.round(sc.storage * 100),
+    mttrMin:    Math.round(inp.mttr * sc.mttr),
+    mttrNew:    Math.round(inp.mttr * (1 - sc.mttr)),
+    teamPct:    Math.round(sc.team  * 100),
+    scenario,
+  };
+
+  render(r);
+  track('calculator_results_viewed', { scenario, tco_3yr: Math.round(tco3y) });
+}
+
+/* ── RENDER ──────────────────────────────────────────── */
+function render(r) {
+  const isFirstRender = !_hasResults;
+  _hasResults = true;
+  const empty = $('empty');
+  if (empty) empty.style.display = 'none';
+  const panel = $('results');
+
+  panel.innerHTML = `
+    <!-- TCO HERO -->
+    <div class="tco-card">
+      <div class="tco-eyebrow">3-Year Estimated Net Total Cost of Ownership (TCO) Reduction · ${CFG.scenarios[r.scenario].label} Scenario</div>
+      <div class="tco-number"><em>${fmt(r.tco3y)}</em></div>
+      <div class="tco-sub">${r.tot.toLocaleString()} total satellites · ${r.sk} constellation</div>
+      <div class="tco-pills">
+        <div>
+          <div class="tco-pill-label">Annual Run-Rate Savings</div>
+          <div class="tco-pill-val">${fmt(r.annualTotal)}</div>
+        </div>
+        <div>
+          <div class="tco-pill-label">Typical Payback Period</div>
+          <div class="tco-pill-val">8–12 months</div>
+        </div>
+        <div>
+          <div class="tco-pill-label">Scale Advantage</div>
+          <div class="tco-pill-val">${r.sk === 'small' ? 'Baseline' : '+' + Math.round((r.sf-1)*100) + '% uplift'}</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- METRIC CARDS -->
+    <div class="metric-grid">
+      <div class="metric-card">
+        <div class="m-label">Infrastructure Savings</div>
+        <div class="m-val">${fmt(r.p1)}</div>
+        <div class="m-sub">per year</div>
+        <div class="m-badge">▼ ${r.infraPct}% cost reduction</div>
+      </div>
+      <div class="metric-card cyan">
+        <div class="m-label">Storage Cost Savings</div>
+        <div class="m-val">${fmt(r.p2)}</div>
+        <div class="m-sub">per year</div>
+        <div class="m-badge">▼ ${r.storagePct}% storage reduction</div>
+      </div>
+      <div class="metric-card amber">
+        <div class="m-label">MTTR Improvement</div>
+        <div class="m-val">−${r.mttrMin} min</div>
+        <div class="m-sub">${r.inp.mttr} min → ${r.mttrNew} min per incident</div>
+        <div class="m-badge">▲ ${Math.round(r.sc.mttr*100)}% faster resolution</div>
+      </div>
+      <div class="metric-card purple">
+        <div class="m-label">Team Productivity Gain</div>
+        <div class="m-val">${fmt(r.p3)}</div>
+        <div class="m-sub">recovered engineering capacity / yr</div>
+        <div class="m-badge">▲ ${r.teamPct}% efficiency gain</div>
+      </div>
+    </div>
+
+    <!-- CHARTS -->
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h3>Savings Breakdown</h3>
+        <p>Annual savings by category (${CFG.scenarios[r.scenario].label})</p>
+        <div class="chart-wrap"><canvas id="ch-donut"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <h3>3-Year Cumulative Savings</h3>
+        <p>Projected cumulative savings over 36 months</p>
+        <div class="chart-wrap"><canvas id="ch-bar"></canvas></div>
+      </div>
+    </div>
+
+    <!-- BREAKDOWN TABLE -->
+    <div class="breakdown">
+      <h3>Savings Detail by Category</h3>
+      <p>Annual and 3-year breakdown · ${CFG.scenarios[r.scenario].label} scenario · ${r.tot.toLocaleString()} satellites</p>
+      <div class="bd-table-wrap">
+      <table class="bd-table">
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th>Annual</th>
+            <th>3-Year</th>
+            <th class="driver-col">Key Driver</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${[
+            [0, 'Infrastructure Consolidation', r.p1, `${r.infraPct}% reduction · ${r.sf}× scale factor`],
+            [1, 'Storage Optimization',          r.p2, `${r.storagePct}% reduction (InfluxDB 3 compression)`],
+            [2, 'Engineering Overhead',           r.p3, `${r.teamPct}% of ${r.inp.team} FTE${r.inp.team !== 1 ? 's' : ''} · $${(CFG.fte/1e3).toFixed(0)}K/yr loaded`],
+            [3, 'Incident Cost Reduction',        r.p4, `${r.inc} incidents/yr · ${r.mttrMin} min saved ea.`],
+          ].map(([i,label,val,driver]) => `
+            <tr>
+              <td><span class="dot" style="background:${CFG.colors[i]}"></span>${label}</td>
+              <td>${fmt(val)}</td>
+              <td>${fmt(val*3)}</td>
+              <td class="driver-col" style="color:var(--gray);font-size:12px">${driver}</td>
+            </tr>`).join('')}
+          <tr class="total">
+            <td>Total Net TCO Reduction</td>
+            <td>${fmt(r.annualTotal)}</td>
+            <td>${fmt(r.tco3y)}</td>
+            <td class="driver-col"></td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+    </div>
+
+    <!-- ASSUMPTIONS -->
+    <div class="assumptions">
+      <div class="assm-toggle" onclick="toggleAssm(this)">
+        <span>📋</span>
+        <h3>Methodology &amp; Assumptions</h3>
+        <span class="arr">▼</span>
+      </div>
+      <div class="assm-body">
+        <ul class="assm-list">
+          <li>Infrastructure savings from <strong>consolidating fragmented mission &amp; service assurance</strong> telemetry systems</li>
+          <li>Storage reduction based on <strong>InfluxDB 3 compression</strong>; Eutelsat runs 600+ LEO + 35 GEO satellites on InfluxDB at &gt;1M data points/sec across &gt;15M unique series</li>
+          <li>Fully-loaded FTE cost: <strong>$${(CFG.fte/1e3).toFixed(0)}K/year</strong> (U.S. industry average)</li>
+          <li>Satellite incident cost: <strong>$${(CFG.incidentCost/1e3).toFixed(0)}K/hour</strong> of service disruption</li>
+          <li>Estimated <strong>${r.inc} incidents/year</strong> for a ${r.sk} constellation</li>
+          <li>Scale factor of <strong>${r.sf}×</strong> — larger fleets benefit more from consolidation</li>
+          <li>Conservative uses <strong>lower-bound</strong> of operator-reported savings ranges</li>
+          <li>Aggressive uses <strong>upper-bound</strong> achieved by best-in-class operators</li>
+          <li>Payback window of <strong>8–12 months</strong> based on typical deployment experience</li>
+          <li>Model does <strong>not</strong> include platform licensing costs — contact us for full TCO</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="cta-card">
+      <h2>Ready to see how this applies to your constellation?</h2>
+      <p>These figures are built on industry benchmarks. Our team can produce a custom TCO model tailored to your need.</p>
+      <div class="cta-btns">
+        <a href="https://www.influxdata.com/contact-sales/" target="_blank" class="btn-primary" onclick="track('cta_clicked',{type:'schedule'})">
+          Schedule a Technical Consultation
+        </a>
+<button class="btn-ghost" onclick="shareLink()">🔗 Share Results</button>
+      </div>
+    </div>
+  `;
+
+  renderCharts(r);
+
+  // Bug fix #6: auto-scroll to results on first calculate (mobile/single-column only)
+  if (isFirstRender && window.innerWidth < 921) {
+    setTimeout(() => panel.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
+  }
+}
+
+/* ── CHARTS ──────────────────────────────────────────── */
+function renderCharts(r) {
+  Object.values(_charts).forEach(c => c.destroy());
+  _charts = {};
+
+  const pillars    = [r.p1, r.p2, r.p3, r.p4];
+  const pLabels    = ['Infrastructure','Storage','Engineering','Incidents'];
+  const annualTot  = pillars.reduce((a,b)=>a+b,0);
+
+  // Donut
+  const ctxD = document.getElementById('ch-donut');
+  if (ctxD) {
+    _charts.donut = new Chart(ctxD, {
+      type: 'doughnut',
+      data: {
+        labels: pLabels,
+        datasets: [{ data: pillars, backgroundColor: CFG.colors, borderWidth: 3, borderColor: '#fff' }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '64%',
+        plugins: {
+          legend: { position:'bottom', labels:{ padding:14, font:{size:12}, boxWidth:12 } },
+          tooltip: { callbacks: { label: c => ` ${c.label}: ${fmt(c.raw)} (${Math.round(c.raw/annualTot*100)}%)` } },
+        },
+      },
+    });
+  }
+
+  // Stacked bar — cumulative by year
+  const ctxB = document.getElementById('ch-bar');
+  if (ctxB) {
+    _charts.bar = new Chart(ctxB, {
+      type: 'bar',
+      data: {
+        labels: ['Year 1','Year 2','Year 3'],
+        datasets: pLabels.map((label,i) => ({
+          label,
+          backgroundColor: CFG.colors[i],
+          data: [1,2,3].map(y => pillars[i]*y),
+        })),
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        scales: {
+          x: { stacked:true, grid:{ display:false } },
+          y: {
+            stacked: true,
+            grid: { color:'rgba(0,0,0,.05)' },
+            ticks: { callback: v => v>=1e6?'$'+(v/1e6).toFixed(1)+'M':'$'+(v/1e3).toFixed(0)+'K' },
+          },
+        },
+        plugins: {
+          legend: { position:'bottom', labels:{ padding:12, font:{size:12}, boxWidth:12 } },
+          tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${fmt(c.raw)}` } },
+        },
+      },
+    });
+  }
+}
+
+/* ── ASSUMPTIONS TOGGLE ──────────────────────────────── */
+function toggleAssm(el) {
+  el.classList.toggle('open');
+  el.nextElementSibling.classList.toggle('open');
+}
+
+/* ── SHARE LINK ──────────────────────────────────────── */
+function shareLink() {
+  const d = {
+    a: $('i-sats-now').value, b: $('i-sats-plan').value,
+    c: fv('i-infra'),         d2: fv('i-storage'),   // store raw numbers
+    e: $('i-team').value,     f: $('i-mttr').value, s: scenario,
+  };
+  const url = `${location.origin}${location.pathname}?v=1&d=${btoa(JSON.stringify(d))}`;
+  navigator.clipboard.writeText(url).then(() => showToast('✓ Share link copied!')).catch(() => showToast(url));
+  track('cta_clicked', { type:'share' });
+}
+
+function loadFromUrl() {
+  const p = new URLSearchParams(location.search).get('d');
+  if (!p) return;
+  try {
+    const d = JSON.parse(atob(p));
+    $('i-sats-now').value  = d.a  || '';
+    $('i-sats-plan').value = d.b  || '';
+    $('i-infra').value     = d.c  ? parseInt(d.c).toLocaleString('en-US')  : '';
+    $('i-storage').value   = d.d2 ? parseInt(d.d2).toLocaleString('en-US') : '';
+    $('i-team').value      = d.e  || '';
+    $('i-mttr').value      = d.f  || '';
+    if (d.s) setScenario(d.s);
+    setTimeout(calculate, 150);
+  } catch(e) { /* ignore bad URLs */ }
+}
+
+/* ── PDF ─────────────────────────────────────────────── */
+async function downloadPDF() {
+  track('cta_clicked', { type:'pdf' });
+  showToast('⏳ Generating PDF…', 5000);
+  try {
+    const { jsPDF } = window.jspdf;
+    const canvas = await html2canvas($('results'), { scale:1.5, useCORS:true, backgroundColor:'#F5F4FB' });
+    const pdf  = new jsPDF({ orientation:'p', unit:'mm', format:'a4' });
+    const pW   = pdf.internal.pageSize.getWidth();
+    const pH   = pdf.internal.pageSize.getHeight();
+    const imgH = (canvas.height * pW) / canvas.width;
+    let y = 0;
+    while (y < imgH) {
+      if (y > 0) pdf.addPage();
+      pdf.addImage(canvas.toDataURL('image/jpeg',.88), 'JPEG', 0, -y, pW, imgH);
+      y += pH;
+    }
+    pdf.save('InfluxDB-Satellite-ROI-Report.pdf');
+    showToast('✓ PDF downloaded!');
+  } catch(e) { showToast('PDF requires a live browser environment.'); }
+}
+
+/* ── INPUT HINT HELPERS (UX #6, #9) ─────────────────── */
+const _usd = new Intl.NumberFormat('en-US', { style:'currency', currency:'USD', maximumFractionDigits:0 });
+
+function updateHint(inputId, hintId, suffix) {
+  const hint = $(hintId);
+  if (!hint) return;
+  const v = parseFloat($(inputId).value);
+  if (!v || v <= 0) { hint.textContent = ''; return; }
+  if (inputId === 'i-storage') {
+    hint.textContent = `= ${_usd.format(v)} / month · ${_usd.format(v * 12)} / year`;
+  } else {
+    hint.textContent = `= ${_usd.format(v)} ${suffix}`;
+  }
+}
+
+function updateTeamHint() {
+  const v = parseFloat($('i-team').value) || 0;
+  const hint = $('i-team-hint');
+  if (!hint) return;
+  if (v === 0) {
+    hint.textContent = 'Enter 0 to exclude this pillar';
+    hint.style.color = 'var(--amber)';
+  } else {
+    hint.textContent = `≈ ${_usd.format(Math.round(v * CFG.fte * 0.25))} productivity gain / yr`;
+    hint.style.color = 'var(--gray)';
+  }
+}
+
+/* ── ANALYTICS STUB ──────────────────────────────────── */
+function track(name, props={}) {
+  console.log('[ROI]', name, props);
+  // Uncomment to activate:
+  // gtag?.('event', name, props);          // GA4
+  // analytics?.track(name, props);         // Segment
+  // window._hsq?.push(['trackEvent', {id:name, value:props}]); // HubSpot
+}
+
+/* ── INIT ────────────────────────────────────────────── */
+track('calculator_started');
+loadFromUrl();
+document.querySelectorAll('input[type=number]').forEach(el =>
+  el.addEventListener('input', () => track('calculator_input_changed', { field:el.id }))
+);
+</script>
+</body>
+</html>
